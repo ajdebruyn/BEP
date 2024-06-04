@@ -310,7 +310,7 @@ class MPS:
         plt.ylabel("$〈 S_Z 〉$")
         plt.grid()
         plt.legend(bbox_to_anchor=(1.04, 0.5), loc="center left", borderaxespad=0)
-        plt.savefig('sol_sz.png', dpi=500, bbox_inches='tight')
+        plt.savefig('RK_sol_sz.png', dpi=500, bbox_inches='tight')
         plt.show()
         
         data["Sz_osc"][asdf,jkl] = osc_max
@@ -321,7 +321,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Norm of $|ρ〉〉$")
             plt.grid()
-            plt.savefig('sol_norm.png', dpi=500, bbox_inches='tight')
+            plt.savefig('RK_sol_norm.png', dpi=500, bbox_inches='tight')
             plt.show()
             
             plt.plot(time_axis, self.trace[-steps:])
@@ -329,7 +329,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Trace of $|ρ〉〉$")
             plt.grid()
-            plt.savefig('sol_trace.png', dpi=500, bbox_inches='tight')
+            plt.savefig('RK_sol_trace.png', dpi=500, bbox_inches='tight')
             plt.show()
         
         if track_energy:
@@ -338,7 +338,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Energy $E$")
             plt.grid()
-            plt.savefig('sol_energy.png', dpi=500, bbox_inches='tight')
+            plt.savefig('RK_sol_energy.png', dpi=500, bbox_inches='tight')
             plt.show()
         
         if (track_current==True):
@@ -347,7 +347,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Current $I$")
             plt.grid()
-            plt.savefig('sol_current.png', dpi=500, bbox_inches='tight')
+            plt.savefig('RK_sol_current.png', dpi=500, bbox_inches='tight')
             plt.show()
             
         return
@@ -356,7 +356,7 @@ class MPS:
 ########################################################################################  
 
 class Time_Operator:
-    def __init__(self, N, d, JXY, JZ, h, s_coup, weightLR, dt):
+    def __init__(self, N, d, JXY, JZ, h, s_coup, weightLR, dt, order):
         self.N = N
         self.d = d
         self.JXY = JXY
@@ -365,7 +365,7 @@ class Time_Operator:
         self.s_coup = s_coup
         self.dt = dt
         self.weightLR = weightLR
-        self.order = 2
+        self.order = order
         
         if isinstance(dt, complex):     
             self.is_imaginary = True
@@ -443,16 +443,79 @@ class Time_Operator:
     
     def Create_F(self, Lind_Op, site, order, m, s_val):
         """ Create F_m^M as in Cao Eq. (13) """
-        temp = self.create_J_m(Lind_Op, site, s_val[0], m)
-        for i in range(order):
-            temp2 = np.matmul(self.create_J_m(Lind_Op, site, (s_val[i+1]-s_val[i]), m), self.Calculate_LL_site(Lind_Op, site))
+        temp = self.create_J_m(Lind_Op, site, s_val[0], order)
+        for i in range(m):
+            temp2 = np.matmul(self.create_J_m(Lind_Op, site, (s_val[i+1]-s_val[i]), order), self.Calculate_LL_site(Lind_Op, site))
             temp = np.matmul(temp2, temp)
         return temp
     
     def Create_Duhamel(self, Lind_Op, site, order):
         """ Create approximation of the Duhamel notation up to 2nd order as in Cao Eq. (10) """
-        return self.create_J_m(Lind_Op, site, order, 0, self.dt) + self.dt * self.create_J_m(Lind_Op, site, order-1, 0, self.dt) * self.Approximate_LL(Lind_Op, site, order)
+        # return self.create_J_m(Lind_Op, site, order, 0, self.dt) + self.dt * self.create_J_m(Lind_Op, site, order-1, 0, self.dt) * self.Approximate_LL(Lind_Op, site, order)
+        Op = self.create_J_m(Lind_Op, site, self.dt, order)
+        for m in range(1, order+1):
+            s_val = np.zeros(m+1)
+            s_val[0] = self.dt
+            k_list = np.zeros((m, 4, self.d**4, self.d**4), dtype=complex)
+            Op = np.add(Op, self.RK4(Lind_Op, site, order, m, s_val, k_list, 0))
+        return Op
     
+    def RK4(self, Lind_Op, site, order, m, s_val, k_list, cyc):
+        """ Calculate nested RK4 to approximate the integral up to 4th order """
+        stages = np.array([0, 0.5, 0.5, 1])
+        
+        if cyc < m-1:
+            for j in range(4):
+                s_val[cyc+1] = s_val[cyc] * stages[j]
+                h = s_val[cyc]
+                k_list[cyc][j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, k_list, cyc+1), np.eye(self.d**4) + stages[j]*k_list[cyc][j-1])
+                
+        else:
+            for j in range(4):
+                s_val[cyc+1] = s_val[cyc] * stages[j]
+                h = s_val[cyc]
+                k_list[cyc][j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, np.flip(s_val)), np.eye(d**4) + stages[j]*k_list[cyc][j-1])
+            
+        return np.eye(self.d**4) + (k_list[cyc][0] + 2 * k_list[cyc][1] + 2 * k_list[cyc][2] + k_list[cyc][3])/6
+    
+    def RK(self, Lind_Op, site, order, m, s_val, cyc):
+        """ Calculate nested RK4 to approximate the integral up to 4th order """
+        s_list = np.array([0, 0.5, 0.5, 1])
+        k_list = np.zeros((4, self.d**4, self.d**4))
+    
+        if cyc < m - 1:
+            for j in range(4):
+                if cyc == 0:
+                    s_val[cyc] = s_list[j] * self.dt
+                    h = self.dt
+                else:
+                    s_val[cyc] = s_val[cyc - 1] + s_list[j] * (s_val[cyc - 1] - s_val[cyc - 2])  # Change 1
+                    h = s_val[cyc - 1] - s_val[cyc - 2] if cyc > 1 else self.dt  # Change 2
+            
+                if j == 0:
+                    k_list[j] = h * self.RK4(Lind_Op, site, order, m, s_val, cyc + 1)  # Change 3
+                elif j == 1 or j == 2:
+                    k_list[j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, cyc + 1), np.eye(self.d**4) + 0.5 * k_list[j - 1])  # Change 3
+                else:
+                    k_list[j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, cyc + 1), np.eye(self.d**4) + k_list[j - 1])  # Change 3
+        else:
+            for j in range(4):
+                if cyc == 0:
+                    s_val[cyc] = s_list[j] * self.dt
+                    h = self.dt
+                else:
+                    s_val[cyc] = s_val[cyc - 1] + s_list[j] * (s_val[cyc - 1] - s_val[cyc - 2])  # Change 1
+                    h = s_val[cyc - 1] - s_val[cyc - 2] if cyc > 1 else self.dt  # Change 2
+                
+                if j == 0:
+                    k_list[j] = h * self.Create_F(Lind_Op, site, order, m, s_val)  # Change 3
+                elif j == 1 or j == 2:
+                    k_list[j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, s_val), np.eye(self.d**4) + 0.5 * k_list[j - 1])  # Change 3
+                else:
+                    k_list[j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, s_val), np.eye(self.d**4) + k_list[j - 1])  # Change 3
+        
+        return np.eye(self.d**4) + (k_list[0] + 2 * k_list[1] + 2 * k_list[2] + k_list[3]) / 6  # Change 4
+        
     def Lindblad_operators(self, weights):
         """ Create the set of Lindblad operators including their weights """
         return weights[0]*np.eye(d), weights[1]*Sp, weights[2]*Sm, weights[3]*Sz    
@@ -485,7 +548,7 @@ class Time_Operator:
         """ Approximates exp(dt L_L) by a Taylor series truncation """
         LL = self.Calculate_LL_site(Lind_Op, site)
         temp = np.eye(self.d**4)
-        for j in range(1, order+100):
+        for j in range(1, order+1):
             temp = np.add(temp, LL**j * dt**j / math.factorial(j))
         return temp
     
@@ -493,7 +556,7 @@ class Time_Operator:
         """ Approximates exp(dt L_J) by a 'Taylor series' truncation in Kraus form """
         LJ = self.Calculate_LJ_site(Lind_Op, site)
         temp = np.eye(self.d**4)
-        for j in range(1,order+100):
+        for j in range(1,order+1):
             temp = np.add(temp, LJ**j * dt**j / math.factorial(j))
         return temp
     
@@ -513,11 +576,19 @@ class Time_Operator:
         Lb_arr["index"][0] = 0
         Lb_arr["index"][1] = N-2
         
+        
         Lind_Op = np.zeros((self.d,self.d**2,self.d,self.d))
         for i in range(len(Lb_arr["index"])):
             Lind_Op[i] = self.Lindblad_operators(weightLR[i])
             Lb_arr["Operator"][i,:,:] = self.Calculate_LJ_site(Lind_Op[i], Lb_arr["index"][i]) + self.Calculate_LL_site(Lind_Op[i], Lb_arr["index"][i])
-            Lb_arr["TimeOp"][i,:,:,:,:] = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)        
+            
+            if order == 4:
+                TimeOp = np.reshape(self.Create_Duhamel(Lind_Op[i], Lb_arr["index"][i], order), (self.d**2, self.d**2, self.d**2, self.d**2) )
+            else:
+                TimeOp = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)
+            
+            Lb_arr["TimeOp"][i,:,:,:,:] = TimeOp
+            
         return Lb_arr
 
 
@@ -629,8 +700,8 @@ Sx          = np.array([[0,1], [1,0]])
 Sy          = np.array([[0,-1j], [1j,0]])
 Sz          = np.array([[1,0],[0,-1]])
 
-t_end = 40
-
+t_end = 50
+order = 4
 
 #### Spin current operator and cutoff factor
 spin_current_op = 2 * ( np.kron( np.kron(Sx, np.eye(d)) , np.kron(Sy, np.eye(d))) - np.kron( np.kron(Sy, np.eye(d)) , np.kron(Sx, np.eye(d))) )
@@ -663,7 +734,7 @@ def main():
         DENS1 = create_superket(MPS1, chi)
     
     #creating time evolution object
-    TimeEvol_obj1 = Time_Operator(N, d, JXY, JZ, h, s_coup, weightLR, dt)
+    TimeEvol_obj1 = Time_Operator(N, d, JXY, JZ, h, s_coup, weightLR, dt, order)
     #TimeEvol_obj2 = Time_Operator(N, d, JXY, JZ, h, s_coup, dt, False, False)
     
     #declaring which desired operator expectations must be tracked -- not used here
@@ -691,13 +762,13 @@ def main():
     plt.ylabel("$〈 S_Z 〉$")
     plt.grid()
 #    plt.title(f"Expectation value of $〈 S_Z 〉$ for each site") #after {steps+1} steps with dt={dt}")
-    plt.savefig('sol_sz_site.png', dpi=500, bbox_inches='tight')
+    plt.savefig('RK_sol_sz_site.png', dpi=500, bbox_inches='tight')
     plt.show()  
     pass
 
 
-t_range = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.085, 0.09, 0.095]
-chi_range = [9, 11, 13, 15, 17]
+t_range = [0.02] # [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.085, 0.09, 0.095]
+chi_range = [15] # [9, 11, 13, 15, 17]
 
 data = np.zeros((), dtype=[
     ("t_range", complex, (len(t_range))),
@@ -731,7 +802,7 @@ for asdf in range(len(t_range)):
         
         main()
         
-        filename = 'C:\\Users\\sande\\Downloads\\BEPtest1'
+        filename = 'C:\\Users\\sande\\Downloads\\BEP_RK'
         np.save(filename, data)
         
         print(asdf,jkl)

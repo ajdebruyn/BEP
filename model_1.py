@@ -453,68 +453,39 @@ class Time_Operator:
         """ Create approximation of the Duhamel notation up to 2nd order as in Cao Eq. (10) """
         # return self.create_J_m(Lind_Op, site, order, 0, self.dt) + self.dt * self.create_J_m(Lind_Op, site, order-1, 0, self.dt) * self.Approximate_LL(Lind_Op, site, order)
         Op = self.create_J_m(Lind_Op, site, self.dt, order)
-        for m in range(1, order+1):
-            s_val = np.zeros(m+1)
-            s_val[0] = self.dt
-            k_list = np.zeros((m, 4, self.d**4, self.d**4), dtype=complex)
-            Op = np.add(Op, self.RK4(Lind_Op, site, order, m, s_val, k_list, 0))
+        if order == 4:
+            for m in range(1, order+1):
+                s_val = np.zeros(m+1)
+                s_val[0] = self.dt
+                k_list = np.zeros((m, 4, self.d**4, self.d**4), dtype=complex)
+                Op = np.add(Op, self.RK4(Lind_Op, site, order, m, s_val, k_list, 0))
+        if order <= 2:
+            for m in range(1, order+1):
+                Op = np.add(Op, self.Midpoint(Lind_Op, site, order, m))
         return Op
+    
+    def Midpoint(self, Lind_Op, site, order, m):
+        if m == 2:
+            return np.eye(self.d**4) + 0.5 * self.dt**2 * np.matmul(self.Create_F(Lind_Op, site, 2, m, [self.dt/4, self.dt/2, self.dt]), np.eye(self.d**4) + self.dt/4 * self.Create_F(Lind_Op, site, 2, m, np.flip([0, self.dt/2, self.dt])))
+        if m == 1:
+            return np.eye(self.d**4) + self.dt * np.matmul(self.Create_F(Lind_Op, site, 2, m, [self.dt/2, self.dt]), np.eye(self.d**4) + self.Create_F(Lind_Op, site, 2, m, np.flip([0, self.dt])))
     
     def RK4(self, Lind_Op, site, order, m, s_val, k_list, cyc):
         """ Calculate nested RK4 to approximate the integral up to 4th order """
         stages = np.array([0, 0.5, 0.5, 1])
+        h = s_val[cyc]
         
         if cyc < m-1:
             for j in range(4):
                 s_val[cyc+1] = s_val[cyc] * stages[j]
-                h = s_val[cyc]
                 k_list[cyc][j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, k_list, cyc+1), np.eye(self.d**4) + stages[j]*k_list[cyc][j-1])
                 
         else:
             for j in range(4):
                 s_val[cyc+1] = s_val[cyc] * stages[j]
-                h = s_val[cyc]
                 k_list[cyc][j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, np.flip(s_val)), np.eye(d**4) + stages[j]*k_list[cyc][j-1])
             
         return np.eye(self.d**4) + (k_list[cyc][0] + 2 * k_list[cyc][1] + 2 * k_list[cyc][2] + k_list[cyc][3])/6
-    
-    def RK(self, Lind_Op, site, order, m, s_val, cyc):
-        """ Calculate nested RK4 to approximate the integral up to 4th order """
-        s_list = np.array([0, 0.5, 0.5, 1])
-        k_list = np.zeros((4, self.d**4, self.d**4))
-    
-        if cyc < m - 1:
-            for j in range(4):
-                if cyc == 0:
-                    s_val[cyc] = s_list[j] * self.dt
-                    h = self.dt
-                else:
-                    s_val[cyc] = s_val[cyc - 1] + s_list[j] * (s_val[cyc - 1] - s_val[cyc - 2])  # Change 1
-                    h = s_val[cyc - 1] - s_val[cyc - 2] if cyc > 1 else self.dt  # Change 2
-            
-                if j == 0:
-                    k_list[j] = h * self.RK4(Lind_Op, site, order, m, s_val, cyc + 1)  # Change 3
-                elif j == 1 or j == 2:
-                    k_list[j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, cyc + 1), np.eye(self.d**4) + 0.5 * k_list[j - 1])  # Change 3
-                else:
-                    k_list[j] = h * np.matmul(self.RK4(Lind_Op, site, order, m, s_val, cyc + 1), np.eye(self.d**4) + k_list[j - 1])  # Change 3
-        else:
-            for j in range(4):
-                if cyc == 0:
-                    s_val[cyc] = s_list[j] * self.dt
-                    h = self.dt
-                else:
-                    s_val[cyc] = s_val[cyc - 1] + s_list[j] * (s_val[cyc - 1] - s_val[cyc - 2])  # Change 1
-                    h = s_val[cyc - 1] - s_val[cyc - 2] if cyc > 1 else self.dt  # Change 2
-                
-                if j == 0:
-                    k_list[j] = h * self.Create_F(Lind_Op, site, order, m, s_val)  # Change 3
-                elif j == 1 or j == 2:
-                    k_list[j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, s_val), np.eye(self.d**4) + 0.5 * k_list[j - 1])  # Change 3
-                else:
-                    k_list[j] = h * np.matmul(self.Create_F(Lind_Op, site, order, m, s_val), np.eye(self.d**4) + k_list[j - 1])  # Change 3
-        
-        return np.eye(self.d**4) + (k_list[0] + 2 * k_list[1] + 2 * k_list[2] + k_list[3]) / 6  # Change 4
         
     def Lindblad_operators(self, weights):
         """ Create the set of Lindblad operators including their weights """
@@ -582,10 +553,10 @@ class Time_Operator:
             Lind_Op[i] = self.Lindblad_operators(weightLR[i])
             Lb_arr["Operator"][i,:,:] = self.Calculate_LJ_site(Lind_Op[i], Lb_arr["index"][i]) + self.Calculate_LL_site(Lind_Op[i], Lb_arr["index"][i])
             
-            if order == 4:
-                TimeOp = np.reshape(self.Create_Duhamel(Lind_Op[i], Lb_arr["index"][i], order), (self.d**2, self.d**2, self.d**2, self.d**2) )
-            else:
-                TimeOp = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)
+            # if order == 4:
+            TimeOp = np.reshape(self.Create_Duhamel(Lind_Op[i], Lb_arr["index"][i], order), (self.d**2, self.d**2, self.d**2, self.d**2) )
+            # else:
+            #     TimeOp = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)
             
             Lb_arr["TimeOp"][i,:,:,:,:] = TimeOp
             
@@ -700,11 +671,11 @@ Sx          = np.array([[0,1], [1,0]])
 Sy          = np.array([[0,-1j], [1j,0]])
 Sz          = np.array([[1,0],[0,-1]])
 
-t_end = 50
+t_end = 20
 order = 4
 
 #### Spin current operator and cutoff factor
-spin_current_op = 2 * ( np.kron( np.kron(Sx, np.eye(d)) , np.kron(Sy, np.eye(d))) - np.kron( np.kron(Sy, np.eye(d)) , np.kron(Sx, np.eye(d))) )
+spin_current_op = 0.5 * ( np.kron( np.kron(Sx, np.eye(d)) , np.kron(Sy, np.eye(d))) - np.kron( np.kron(Sy, np.eye(d)) , np.kron(Sx, np.eye(d))) )
 #equivalent operator in terms of Sp and Sm:
 #spin_current_op = 1j* ( np.kron( np.kron(Sp, np.eye(d)) , np.kron(Sm, np.eye(d))) - np.kron( np.kron(Sm, np.eye(d)) , np.kron(Sp, np.eye(d))) )
 
@@ -767,7 +738,7 @@ def main():
     pass
 
 
-t_range = [0.02] # [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.085, 0.09, 0.095]
+t_range = [0.04] # [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.085, 0.09, 0.095]
 chi_range = [15] # [9, 11, 13, 15, 17]
 
 data = np.zeros((), dtype=[

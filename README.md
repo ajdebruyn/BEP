@@ -4,7 +4,7 @@ This repository contains the Python code for the my bachelor project. It is base
 
 The final_model is the "user-friendly" code.
 
-The code simulates a XXZ-Heisenberg model between two leads. We use MPS, or vectorised MPDO, as an efficient method. 
+The code simulates a XXZ-Heisenberg model between two leads. We use MPS, or vectorised MPDO, in combination with TEBD and a splitting method. 
 
 It is possible to measure multiple quantities, such as trace, magnetisation and current.
 

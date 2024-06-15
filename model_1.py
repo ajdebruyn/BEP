@@ -21,7 +21,12 @@ import math
 
 import pandas as pd
 
+import itertools as it
+
 from initializations_mps import initialize_halfstate, initialize_LU_RD
+
+from multiprocessing import Pool
+max_cores = 6
 
 
 ########################################################################################################
@@ -310,7 +315,7 @@ class MPS:
         plt.ylabel("$〈 S_Z 〉$")
         plt.grid()
         plt.legend(bbox_to_anchor=(1.04, 0.5), loc="center left", borderaxespad=0)
-        plt.savefig('RK_sol_sz.png', dpi=500, bbox_inches='tight')
+        plt.savefig(f'{name}_sz.png', dpi=500, bbox_inches='tight')
         plt.show()
         
         data["Sz_osc"][asdf,jkl] = osc_max
@@ -321,7 +326,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Norm of $|ρ〉〉$")
             plt.grid()
-            plt.savefig('RK_sol_norm.png', dpi=500, bbox_inches='tight')
+            plt.savefig(f'{name}_norm.png', dpi=500, bbox_inches='tight')
             plt.show()
             
             plt.plot(time_axis, self.trace[-steps:])
@@ -329,7 +334,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Trace of $|ρ〉〉$")
             plt.grid()
-            plt.savefig('RK_sol_trace.png', dpi=500, bbox_inches='tight')
+            plt.savefig(f'{name}_trace.png', dpi=500, bbox_inches='tight')
             plt.show()
         
         if track_energy:
@@ -338,7 +343,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Energy $E$")
             plt.grid()
-            plt.savefig('RK_sol_energy.png', dpi=500, bbox_inches='tight')
+            plt.savefig(f'{name}_energy.png', dpi=500, bbox_inches='tight')
             plt.show()
         
         if (track_current==True):
@@ -347,7 +352,7 @@ class MPS:
             plt.xlabel("Time $t$")
             plt.ylabel("Current $I$")
             plt.grid()
-            plt.savefig('RK_sol_current.png', dpi=500, bbox_inches='tight')
+            plt.savefig(f'{name}_current.png', dpi=500, bbox_inches='tight')
             plt.show()
             
         return
@@ -447,9 +452,34 @@ class Time_Operator:
         for i in range(m):
             temp2 = np.matmul(self.create_J_m(Lind_Op, site, (s_val[i+1]-s_val[i]), order), self.Calculate_LL_site(Lind_Op, site))
             temp = np.matmul(temp2, temp)
-        return temp
+        return np.eye(self.d**4) #temp
     
     def Create_Duhamel(self, Lind_Op, site, order):
+        """ Create approximation of the Duhamel notation up to 2nd order as in Cao Eq. (10) """
+        # return self.create_J_m(Lind_Op, site, order, 0, self.dt) + self.dt * self.create_J_m(Lind_Op, site, order-1, 0, self.dt) * self.Approximate_LL(Lind_Op, site, order)
+        Op = self.create_J_m(Lind_Op, site, self.dt, order)
+        for m in range(1, order):
+            N_m = math.ceil(self.dt**(m-order))
+            fact = (self.dt/N_m)**m
+            r_list = (np.array(range(N_m))+0.5) * self.dt/N_m 
+            for n in range(1, min(m, N_m)+1):
+                combinations_k = it.combinations(range(1, m), n-1)
+                combinations_j = it.combinations(range(1, N_m+1), n)
+                for comb_k in combinations_k:
+                    seq_k = list(comb_k) + [m]
+                    k = fact/math.factorial(seq_k[0])
+                    print(m, n, comb_k)
+                    for i in range(1,n):
+                        k *= 1/math.factorial(seq_k[i]-seq_k[i-1])
+                    for comb_j in combinations_j:
+                        r = np.zeros(n+1)
+                        r[0]=self.dt
+                        for j in range(1,n):
+                            r[-j] = r_list[comb_j[j-1]]
+                        Op = np.add(Op, self.Create_F(Lind_Op, site, order, n, r)*k)
+        return np.add(Op, (self.Calculate_LL_site(Lind_Op, site)*self.dt)**order/math.factorial(order))
+    
+    def Create_Duhamel_RK(self, Lind_Op, site, order):
         """ Create approximation of the Duhamel notation up to 2nd order as in Cao Eq. (10) """
         # return self.create_J_m(Lind_Op, site, order, 0, self.dt) + self.dt * self.create_J_m(Lind_Op, site, order-1, 0, self.dt) * self.Approximate_LL(Lind_Op, site, order)
         Op = self.create_J_m(Lind_Op, site, self.dt, order)
@@ -553,10 +583,10 @@ class Time_Operator:
             Lind_Op[i] = self.Lindblad_operators(weightLR[i])
             Lb_arr["Operator"][i,:,:] = self.Calculate_LJ_site(Lind_Op[i], Lb_arr["index"][i]) + self.Calculate_LL_site(Lind_Op[i], Lb_arr["index"][i])
             
-            # if order == 4:
-            TimeOp = np.reshape(self.Create_Duhamel(Lind_Op[i], Lb_arr["index"][i], order), (self.d**2, self.d**2, self.d**2, self.d**2) )
-            # else:
-            #     TimeOp = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)
+            if False:
+                TimeOp = np.reshape(self.Create_Duhamel(Lind_Op[i], Lb_arr["index"][i], order), (self.d**2, self.d**2, self.d**2, self.d**2) )
+            else:
+                TimeOp = self.Calculate_L_site(Lind_Op[i], Lb_arr["index"][i], dt, order)
             
             Lb_arr["TimeOp"][i,:,:,:,:] = TimeOp
             
@@ -641,7 +671,7 @@ def calculate_thetas_twosite(state):
 ####################################################################################
 t0 = time.time()
 #### Simulation variables
-N           = 12         #System Length
+N           = 10         #System Length
 d           = 2         #Spin dimension -- do not change
 #chi         = 20        #Dens truncation parameter
 
@@ -655,7 +685,8 @@ normalize   = True      #whether to maintain MPS normalization
 #### Hamiltonian and Lindblad constants
 h           = 0         #Strength of the transverse magnetic field
 JXY         = 1         #XY Coupling strength XXZ Hamiltonian
-JZ          = 1         #Z coupling strength of XXZ Hamiltonian
+Delta       = 1       # anisotropic parameter
+JZ          = JXY*Delta         #Z coupling strength of XXZ Hamiltonian
 
 s_coup      = 1         #Coupling strength of Dissipative terms
 s_coup      = np.sqrt(s_coup)  
@@ -671,8 +702,8 @@ Sx          = np.array([[0,1], [1,0]])
 Sy          = np.array([[0,-1j], [1j,0]])
 Sz          = np.array([[1,0],[0,-1]])
 
-t_end = 20
-order = 4
+t_end = 10
+order = 2
 
 #### Spin current operator and cutoff factor
 spin_current_op = 0.5 * ( np.kron( np.kron(Sx, np.eye(d)) , np.kron(Sy, np.eye(d))) - np.kron( np.kron(Sy, np.eye(d)) , np.kron(Sx, np.eye(d))) )
@@ -701,13 +732,12 @@ def main():
     else:
         MPS1 = MPS(1, N,d,chi, False)
         #MPS1.Gamma_mat[:,:,:,:], MPS1.Lambda_mat[:,:], MPS1.locsize[:] = initialize_halfstate(N,d,chi)
-        MPS1.Gamma_mat[:,:,:,:], MPS1.Lambda_mat[:,:], MPS1.locsize[:] = initialize_LU_RD(N,d,chi, scale_factor = 0.8 )        
+        MPS1.Gamma_mat[:,:,:,:], MPS1.Lambda_mat[:,:], MPS1.locsize[:] = initialize_LU_RD(N,d,chi, scale_factor = 1 )        
         DENS1 = create_superket(MPS1, chi)
     
     #creating time evolution object
     TimeEvol_obj1 = Time_Operator(N, d, JXY, JZ, h, s_coup, weightLR, dt, order)
     #TimeEvol_obj2 = Time_Operator(N, d, JXY, JZ, h, s_coup, dt, False, False)
-    
     #declaring which desired operator expectations must be tracked -- not used here
     desired_expectations = []
     #desired_expectations.append(("Sz", np.kron(Sz, np.eye(d)), False, 0))
@@ -733,13 +763,14 @@ def main():
     plt.ylabel("$〈 S_Z 〉$")
     plt.grid()
 #    plt.title(f"Expectation value of $〈 S_Z 〉$ for each site") #after {steps+1} steps with dt={dt}")
-    plt.savefig('RK_sol_sz_site.png', dpi=500, bbox_inches='tight')
+    plt.savefig(f'{name}_sz_site.png', dpi=500, bbox_inches='tight')
     plt.show()  
     pass
 
 
-t_range = [0.04] # [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.085, 0.09, 0.095]
-chi_range = [15] # [9, 11, 13, 15, 17]
+t_range = [0.02] #[0.005, 0.01, 0.02, 0.03, 0.05] # [0.002, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]
+chi_range = [15] #[7, 9, 11, 13, 15, 17, 19, 21, 23] # [7, 9, 11, 13, 15, 17, 19]
+name = "test"
 
 data = np.zeros((), dtype=[
     ("t_range", complex, (len(t_range))),
@@ -754,8 +785,8 @@ data = np.zeros((), dtype=[
     ("current_end", complex, (len(t_range), len(chi_range)))
     ])
 
-data["t_range"] = t_range[0]
-data["chi_range"] = chi_range[0]
+data["t_range"] = np.array(t_range)
+data["chi_range"] = np.array(chi_range)
 
 timer = time.time()
 
@@ -771,9 +802,12 @@ for asdf in range(len(t_range)):
         
         print(asdf,jkl)
         
-        main()
+        if __name__=="__main__":
+            p = Pool(processes=max_cores)
+            main()
+            p.close()
         
-        filename = 'C:\\Users\\sande\\Downloads\\BEP_RK'
+        filename = f'C:\\Users\\sande\\Downloads\\BEP_{name}' # trotter, chi
         np.save(filename, data)
         
         print(asdf,jkl)

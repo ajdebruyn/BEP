@@ -14,7 +14,7 @@ The packages os, numpy, scipy.linalg, matplotlib.pyplot, pickle, time, datetime,
 
 The code initializations_mps is used for initialisations of the MPS is used in the main code.
 
-model_1 contains more features, but is not very user-friendly. 
+model_1 contains more features, but is not very user-friendly. There are also two modules ("vergelijken") included for a more thorough analysis of chi and dt and the errors.
 
 
 
